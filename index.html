@@ -122,7 +122,8 @@
     <script>
         class WidgetAuth {
             constructor() {
-                this.baseURL = 'https://widget-auth-poc-api-92a2221ec6f4.herokuapp.com/api';
+                // Auto-detect API URL based on current environment
+                this.baseURL = this.getApiUrl();
                 this.accessToken = localStorage.getItem('access_token');
                 this.refreshToken = localStorage.getItem('refresh_token');
                 this.currentChallenge = null;
@@ -130,6 +131,17 @@
 
                 this.initializeElements();
                 this.loadMessages();
+            }
+
+            getApiUrl() {
+                // If running on GitHub Pages or production, use Heroku API
+                if (window.location.hostname.includes('github.io') ||
+                    window.location.hostname.includes('herokuapp.com') ||
+                    window.location.protocol === 'https:') {
+                    return 'https://widget-auth-poc-api-92a2221ec6f4.herokuapp.com/api';
+                }
+                // Otherwise use local development server
+                return 'http://localhost:8000/api';
             }
 
             initializeElements() {
