@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Widget Authentication POC - Demo</title>
+    <title>Widget Authentication POC</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -21,24 +21,6 @@
         h1 {
             color: #333;
             text-align: center;
-        }
-        .config-section {
-            background-color: #f8f9fa;
-            padding: 15px;
-            border-radius: 5px;
-            margin-bottom: 20px;
-            border: 1px solid #dee2e6;
-        }
-        .config-section h3 {
-            margin-top: 0;
-            color: #495057;
-        }
-        .config-input {
-            width: 100%;
-            padding: 8px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            font-size: 14px;
         }
         .messages-container {
             border: 1px solid #ddd;
@@ -118,44 +100,14 @@
             font-size: 12px;
             color: #666;
         }
-        .connection-status {
-            padding: 8px 12px;
-            border-radius: 4px;
-            font-size: 12px;
-            margin-left: 10px;
-        }
-        .connected {
-            background-color: #d4edda;
-            color: #155724;
-        }
-        .disconnected {
-            background-color: #f8d7da;
-            color: #721c24;
-        }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>Widget Authentication POC</h1>
 
-        <div class="config-section">
-            <h3>🔧 API Configuration</h3>
-            <label for="apiUrl">Backend API URL:</label>
-            <input type="text" id="apiUrl" class="config-input"
-                   value="https://widget-auth-poc-api-92a2221ec6f4.herokuapp.com/api"
-                   placeholder="Enter your backend API URL">
-            <span id="connectionStatus" class="connection-status disconnected">Not connected</span>
-            <br><br>
-            <small>
-                <strong>For local development:</strong> http://localhost:8000/api<br>
-                <strong>For production:</strong> Replace with your deployed backend URL
-            </small>
-        </div>
-
         <div class="messages-container" id="messagesContainer">
-            <p style="text-align: center; color: #666;">
-                Configure your backend API URL above and messages will appear here.
-            </p>
+            <!-- Messages will be displayed here -->
         </div>
 
         <div class="input-section">
@@ -170,14 +122,14 @@
     <script>
         class WidgetAuth {
             constructor() {
+                this.baseURL = 'https://widget-auth-poc-api-92a2221ec6f4.herokuapp.com/api';
                 this.accessToken = localStorage.getItem('access_token');
                 this.refreshToken = localStorage.getItem('refresh_token');
                 this.currentChallenge = null;
                 this.currentNonce = null;
 
                 this.initializeElements();
-                this.setupApiUrlHandler();
-                this.checkConnection();
+                this.loadMessages();
             }
 
             initializeElements() {
@@ -186,8 +138,6 @@
                 this.messagesContainer = document.getElementById('messagesContainer');
                 this.statusContainer = document.getElementById('statusContainer');
                 this.powStatus = document.getElementById('powStatus');
-                this.apiUrlInput = document.getElementById('apiUrl');
-                this.connectionStatus = document.getElementById('connectionStatus');
 
                 this.sendButton.addEventListener('click', () => this.sendMessage());
                 this.messageInput.addEventListener('keypress', (e) => {
@@ -195,41 +145,6 @@
                         this.sendMessage();
                     }
                 });
-            }
-
-            setupApiUrlHandler() {
-                // Load saved API URL
-                const savedUrl = localStorage.getItem('api_url');
-                if (savedUrl) {
-                    this.apiUrlInput.value = savedUrl;
-                }
-
-                // Save API URL when changed
-                this.apiUrlInput.addEventListener('change', () => {
-                    localStorage.setItem('api_url', this.apiUrlInput.value);
-                    this.checkConnection();
-                });
-            }
-
-            get baseURL() {
-                return this.apiUrlInput.value.trim() || 'http://localhost:8000/api';
-            }
-
-            async checkConnection() {
-                try {
-                    const response = await fetch(`${this.baseURL}/messages/`, {
-                        method: 'HEAD',
-                        mode: 'cors'
-                    });
-
-                    this.connectionStatus.textContent = 'Connected';
-                    this.connectionStatus.className = 'connection-status connected';
-                    this.loadMessages();
-                } catch (error) {
-                    this.connectionStatus.textContent = 'Not connected';
-                    this.connectionStatus.className = 'connection-status disconnected';
-                    console.error('Connection check failed:', error);
-                }
             }
 
             showStatus(message, type = 'info') {
@@ -245,9 +160,7 @@
 
             async getChallenge() {
                 try {
-                    const response = await fetch(`${this.baseURL}/auth/challenge/`, {
-                        mode: 'cors'
-                    });
+                    const response = await fetch(`${this.baseURL}/auth/challenge/`);
                     if (!response.ok) {
                         throw new Error('Failed to get challenge');
                     }
@@ -256,7 +169,7 @@
                     return data;
                 } catch (error) {
                     console.error('Error getting challenge:', error);
-                    this.showStatus('Failed to get challenge. Check your API URL.', 'error');
+                    this.showStatus('Failed to get challenge', 'error');
                     return null;
                 }
             }
@@ -265,29 +178,48 @@
                 this.updatePowStatus('Solving Proof of Work challenge...');
                 const target = '0'.repeat(difficulty);
                 let nonce = 0;
+                const maxIterations = 1000000; // Giới hạn số lần thử để tránh infinite loop
 
-                return new Promise(async (resolve) => {
+                return new Promise(async (resolve, reject) => {
                     const solve = async () => {
                         const startTime = Date.now();
+                        const batchSize = 1000; // Xử lý theo batch để không block UI
 
-                        // Process in chunks to avoid blocking UI
-                        for (let i = 0; i < 1000; i++) {
-                            const hash = await this.sha256(challenge + nonce);
-                            if (hash.startsWith(target)) {
-                                this.updatePowStatus(`Challenge solved! Nonce: ${nonce}`);
-                                resolve(nonce.toString());
+                        try {
+                            for (let i = 0; i < batchSize && nonce < maxIterations; i++) {
+                                // Sử dụng Web Crypto API cho SHA-256 chính xác
+                                const hash = await this.sha256(challenge + nonce.toString());
+
+                                if (hash.startsWith(target)) {
+                                    this.updatePowStatus(`✅ Challenge solved! Nonce: ${nonce}`);
+                                    resolve(nonce.toString());
+                                    return;
+                                }
+                                nonce++;
+
+                                // Update progress mỗi 100 iterations
+                                if (nonce % 100 === 0) {
+                                    this.updatePowStatus(`Solving... tried ${nonce} nonces`);
+                                }
+
+                                // Prevent UI blocking
+                                if (Date.now() - startTime > 50) {
+                                    setTimeout(solve, 1);
+                                    return;
+                                }
+                            }
+
+                            if (nonce >= maxIterations) {
+                                reject(new Error('PoW solving timeout - max iterations reached'));
                                 return;
                             }
-                            nonce++;
 
-                            // Prevent infinite blocking
-                            if (Date.now() - startTime > 50) {
-                                setTimeout(solve, 1);
-                                return;
-                            }
+                            // Continue solving
+                            setTimeout(solve, 1);
+                        } catch (error) {
+                            console.error('Error in PoW solving:', error);
+                            reject(error);
                         }
-
-                        setTimeout(solve, 1);
                     };
 
                     solve();
@@ -295,11 +227,29 @@
             }
 
             async sha256(message) {
-                // Use Web Crypto API for proper SHA-256
-                const msgBuffer = new TextEncoder().encode(message);
-                const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
-                const hashArray = Array.from(new Uint8Array(hashBuffer));
-                return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+                try {
+                    // Sử dụng Web Crypto API cho SHA-256 chính xác
+                    const msgBuffer = new TextEncoder().encode(message);
+                    const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+                    const hashArray = Array.from(new Uint8Array(hashBuffer));
+                    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+                } catch (error) {
+                    console.error('SHA-256 error:', error);
+                    throw new Error('Failed to compute hash');
+                }
+            }
+
+            // Synchronous SHA-256 for demo (not recommended for production)
+            sha256Sync(message) {
+                // This is a simplified version for demo purposes
+                // In real implementation, use Web Crypto API
+                let hash = 0;
+                for (let i = 0; i < message.length; i++) {
+                    const char = message.charCodeAt(i);
+                    hash = ((hash << 5) - hash) + char;
+                    hash = hash & hash; // Convert to 32-bit integer
+                }
+                return Math.abs(hash).toString(16).padStart(8, '0').repeat(8);
             }
 
             async sendMessage() {
@@ -325,7 +275,7 @@
                     this.loadMessages();
                 } catch (error) {
                     console.error('Error sending message:', error);
-                    this.showStatus('Failed to send message. Check your API URL and try again.', 'error');
+                    this.showStatus('Failed to send message', 'error');
                 } finally {
                     this.sendButton.disabled = false;
                 }
@@ -338,8 +288,7 @@
                         'Content-Type': 'application/json',
                         'Authorization': `Bearer ${this.accessToken}`
                     },
-                    body: JSON.stringify({ content }),
-                    mode: 'cors'
+                    body: JSON.stringify({ content })
                 });
 
                 if (response.status === 401) {
@@ -383,8 +332,7 @@
                         content,
                         challenge: challengeData.challenge,
                         nonce
-                    }),
-                    mode: 'cors'
+                    })
                 });
 
                 if (!response.ok) {
@@ -420,8 +368,7 @@
                         },
                         body: JSON.stringify({
                             refresh: this.refreshToken
-                        }),
-                        mode: 'cors'
+                        })
                     });
 
                     if (!response.ok) {
@@ -441,9 +388,7 @@
 
             async loadMessages() {
                 try {
-                    const response = await fetch(`${this.baseURL}/messages/`, {
-                        mode: 'cors'
-                    });
+                    const response = await fetch(`${this.baseURL}/messages/`);
                     if (!response.ok) {
                         throw new Error(`HTTP ${response.status}`);
                     }
@@ -452,7 +397,7 @@
                     this.displayMessages(messages);
                 } catch (error) {
                     console.error('Error loading messages:', error);
-                    this.messagesContainer.innerHTML = '<p style="text-align: center; color: #999;">Unable to load messages. Please check your API URL.</p>';
+                    this.showStatus('Failed to load messages', 'error');
                 }
             }
 
@@ -496,4 +441,4 @@
         });
     </script>
 </body>
-</html>
+</html>api
