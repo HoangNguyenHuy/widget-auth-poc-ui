@@ -313,46 +313,86 @@
             }
 
             async sendAnonymousMessage(content) {
-                // Get challenge
-                const challengeData = await this.getChallenge();
-                if (!challengeData) {
-                    throw new Error('Failed to get challenge');
+                try {
+                    // Get challenge với retry mechanism
+                    let challengeData = await this.getChallenge();
+                    if (!challengeData) {
+                        throw new Error('Failed to get challenge');
+                    }
+
+                    // Solve challenge với timeout protection
+                    this.updatePowStatus(`Getting challenge: ${challengeData.challenge.substring(0, 8)}...`);
+                    const startTime = Date.now();
+                    const nonce = await this.solveChallenge(challengeData.challenge, challengeData.difficulty);
+                    const solveTime = Date.now() - startTime;
+
+                    this.updatePowStatus(`Challenge solved in ${solveTime}ms, sending message...`);
+
+                    // Send message với retry nếu challenge expired
+                    let response = await fetch(`${this.baseURL}/messages/`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            content,
+                            challenge: challengeData.challenge,
+                            nonce
+                        })
+                    });
+
+                    // Nếu challenge expired, thử lại với challenge mới
+                    if (response.status === 403) {
+                        const errorData = await response.json();
+                        if (errorData.detail && errorData.detail.includes('Challenge expired')) {
+                            this.updatePowStatus('Challenge expired, getting new challenge...');
+
+                            // Get new challenge và thử lại
+                            challengeData = await this.getChallenge();
+                            if (!challengeData) {
+                                throw new Error('Failed to get new challenge');
+                            }
+
+                            const newNonce = await this.solveChallenge(challengeData.challenge, challengeData.difficulty);
+
+                            response = await fetch(`${this.baseURL}/messages/`, {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json'
+                                },
+                                body: JSON.stringify({
+                                    content,
+                                    challenge: challengeData.challenge,
+                                    nonce: newNonce
+                                })
+                            });
+                        }
+                    }
+
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.detail || `HTTP ${response.status}`);
+                    }
+
+                    const data = await response.json();
+
+                    // Save tokens for future requests
+                    if (data.tokens) {
+                        this.accessToken = data.tokens.access;
+                        this.refreshToken = data.tokens.refresh;
+                        localStorage.setItem('access_token', this.accessToken);
+                        localStorage.setItem('refresh_token', this.refreshToken);
+                        this.showStatus('Message sent! You are now authenticated.', 'success');
+                    } else {
+                        this.showStatus('Message sent successfully!', 'success');
+                    }
+
+                    this.updatePowStatus('');
+                } catch (error) {
+                    console.error('Error in sendAnonymousMessage:', error);
+                    this.updatePowStatus('');
+                    throw error;
                 }
-
-                // Solve challenge
-                const nonce = await this.solveChallenge(challengeData.challenge, challengeData.difficulty);
-
-                // Send message with PoW
-                const response = await fetch(`${this.baseURL}/messages/`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        content,
-                        challenge: challengeData.challenge,
-                        nonce
-                    })
-                });
-
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}`);
-                }
-
-                const data = await response.json();
-
-                // Save tokens for future requests
-                if (data.tokens) {
-                    this.accessToken = data.tokens.access;
-                    this.refreshToken = data.tokens.refresh;
-                    localStorage.setItem('access_token', this.accessToken);
-                    localStorage.setItem('refresh_token', this.refreshToken);
-                    this.showStatus('Message sent! You are now authenticated.', 'success');
-                } else {
-                    this.showStatus('Message sent successfully!', 'success');
-                }
-
-                this.updatePowStatus('');
             }
 
             async refreshAccessToken() {
@@ -404,7 +444,11 @@
             }
 
             displayMessages(messages) {
-                const wasAtBottom = this.isScrolledToBottom();
+                // Kiểm tra xem method isScrolledToBottom có tồn tại không
+                const wasAtBottom = this.messagesContainer ?
+                    (this.messagesContainer.scrollHeight - this.messagesContainer.clientHeight <= this.messagesContainer.scrollTop + 100)
+                    : true;
+
                 this.messagesContainer.innerHTML = '';
 
                 if (messages.length === 0) {
