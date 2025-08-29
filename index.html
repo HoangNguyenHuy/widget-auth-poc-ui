@@ -528,6 +528,12 @@
                     behavior: 'smooth'
                 });
             }
+
+            escapeHtml(text) {
+                const div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            }
         }
 
         // Initialize the widget when page loads
